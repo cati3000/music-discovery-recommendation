@@ -1,0 +1,2 @@
+[console_scripts]
+music-discovery = music_mining.cli:main
