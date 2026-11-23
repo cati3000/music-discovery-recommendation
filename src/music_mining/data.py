@@ -14,6 +14,20 @@ def load_tracks(path: str | Path) -> pd.DataFrame:
         raise FileNotFoundError(f"Dataset not found: {csv_path}")
 
     frame = pd.read_csv(csv_path)
+    aliases = {
+        "track_name": ("track_name", "name"),
+        "artists": ("artists", "track_artist"),
+        "track_id": ("track_id", "id"),
+        "popularity": ("popularity", "track_popularity"),
+        "album_name": ("album_name", "track_album_name"),
+    }
+    for canonical, candidates in aliases.items():
+        if canonical not in frame.columns:
+            for candidate in candidates:
+                if candidate in frame.columns:
+                    frame[canonical] = frame[candidate]
+                    break
+
     missing = [column for column in AUDIO_FEATURES if column not in frame.columns]
     if missing:
         raise ValueError(

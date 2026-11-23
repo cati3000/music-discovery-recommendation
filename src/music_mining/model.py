@@ -47,7 +47,17 @@ class MusicDiscoveryModel:
             raise ValueError("The dataset must contain at least n_clusters tracks.")
 
         self.tracks = tracks.reset_index(drop=True).copy()
-        self.matrix = self.scaler.fit_transform(self.tracks[AUDIO_FEATURES])
+        feature_values = self.tracks[AUDIO_FEATURES].apply(
+            pd.to_numeric, errors="coerce"
+        )
+        invalid_rows = feature_values.isna().any(axis=1)
+        if invalid_rows.any():
+            raise ValueError("All model features must contain finite numeric values.")
+        feature_values = feature_values.astype(float)
+        if not np.isfinite(feature_values.to_numpy()).all():
+            raise ValueError("All model features must contain finite numeric values.")
+        self.tracks[AUDIO_FEATURES] = feature_values
+        self.matrix = self.scaler.fit_transform(feature_values)
         self.tracks["cluster"] = self.clusterer.fit_predict(self.matrix)
         coordinates = self.pca.fit_transform(self.matrix)
         self.tracks["pca_1"] = coordinates[:, 0]
@@ -103,10 +113,54 @@ class MusicDiscoveryModel:
         result.insert(0, "similarity", similarities[indexes])
         return result
 
+    def recommend_tracks(self, track_ids: list[str], n: int = 10) -> pd.DataFrame:
+        """Recommend tracks from the average profile of selected track IDs."""
+        if self.tracks is None or self.matrix is None:
+            raise RuntimeError("Fit the model before requesting recommendations.")
+        if n < 1:
+            raise ValueError("n must be positive.")
+        if not track_ids or len(track_ids) > 3:
+            raise ValueError("Choose between one and three tracks.")
+        if "track_id" not in self.tracks:
+            raise ValueError("The dataset does not contain track_id values.")
+
+        text_ids = self.tracks["track_id"].fillna("").astype(str).str.casefold()
+        indexes = []
+        for track_id in track_ids:
+            matches = np.flatnonzero(text_ids.to_numpy() == track_id.casefold())
+            if len(matches) == 0:
+                raise ValueError(f"No track matched track ID: {track_id}")
+            indexes.append(int(matches[0]))
+
+        selected = np.unique(indexes)
+        profile = self.matrix[selected].mean(axis=0, keepdims=True)
+        similarities = cosine_similarity(profile, self.matrix)[0]
+        similarities[selected] = -1
+        count = min(n, len(self.tracks) - len(selected))
+        indexes = np.argsort(similarities)[::-1][:count]
+        result = self.tracks.iloc[indexes].copy()
+        result.insert(0, "similarity", similarities[indexes])
+        return result
+
     def _find_query_matches(self, query: str) -> pd.DataFrame:
         assert self.tracks is not None
+        if not query.strip():
+            return self.tracks.iloc[0:0]
+
         text = self.tracks.fillna("").astype(str)
         query_lower = query.casefold()
+
+        if "track_id" in text:
+            exact_id = text["track_id"].str.casefold() == query_lower
+            if exact_id.any():
+                return self.tracks.loc[exact_id]
+
+        exact_name = pd.Series(False, index=text.index)
+        if "track_name" in text:
+            exact_name = text["track_name"].str.casefold() == query_lower
+            if exact_name.any():
+                return self.tracks.loc[exact_name]
+
         mask = pd.Series(False, index=text.index)
         for column in ("track_id", "track_name", "artists"):
             if column in text:

@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 music-discovery = "music_mining.cli:main"
+music-discovery-web = "music_mining.webapp:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
